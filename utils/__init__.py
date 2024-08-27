@@ -119,7 +119,7 @@ def feature_engineer(ratings, anime):
 
     return ratings, genre_counts, genre_ratings, episodes_counts, episodes_ratings, type_counts, type_ratings
 
-def nmf(train, redo=False):
+def nmf(training_data, redo=False):
     # Check if the 'nmf_components.pkl' file exists in the current directory
     if not redo:
         if os.path.exists('data/nmf_components.pkl'):
@@ -129,10 +129,11 @@ def nmf(train, redo=False):
             print("'nmf_components.pkl' file not found. Will need to recalculate NMF components.")
             redo = True
 
+    user_item_matrix = training_data.pivot(index='user_id', columns='anime_id', values='rating')
+    
     if redo:
         from sklearn.decomposition import NMF
 
-        user_item_matrix = train.pivot(index='user_id', columns='anime_id', values='rating')
         # There are 44 genres, 20 components seems a good place to start
         dec = NMF(n_components=20, random_state=42)
         w1 = dec.fit_transform(user_item_matrix.fillna(0)) # user-group matrix
@@ -153,46 +154,38 @@ def nmf(train, redo=False):
     
     return w1, h1, user_item_matrix
 
-def recommend(user, w1, h1, user_item_matrix, n=5):
-    user_item_matrix.reset_index(inplace=True)
-    r_user = user_item_matrix[user_item_matrix['user_id'] == user].index
+def recommend(user, w1, h1, user_item_matrix):
+    r_user = user_item_matrix.index.get_loc(user)
 
     groups = w1.argmax(axis=1)
     user_group = groups[r_user]
 
     group_users = np.where(groups == user_group)
 
-    rec_anime = []
     group_anime = h1[user_group, :]
-    for _ in range(n):
-        i_rec_anime = np.argmax(group_anime, axis=1)
-        group_anime = np.delete(group_anime, i_rec_anime, axis=0)
-        rec_anime.append(user_item_matrix.columns[i_rec_anime])
+    
+    # Remove watched anime from recommendations
+    watched_anime = user_item_matrix.loc[user].dropna().index
+    watched_cols = np.array([user_item_matrix.columns.get_loc(col) for col in watched_anime])
 
-    rec_anime_names = anime[anime['anime_id'].isin(rec_anime)]['name'].values
-    return rec_anime, rec_anime_names
+    rec_cols = np.argsort(group_anime)[::-1]
+    rec_cols = rec_cols[~np.isin(rec_cols, watched_cols)]
 
+    rec_anime_id = user_item_matrix.iloc[r_user, rec_cols].index
+    rec_weight = group_anime[rec_cols] / np.sum(group_anime[rec_cols])
+    
+    return rec_anime_id, rec_weight
+    
+def get_anime_name(anime_id, anime, n=0):
+    
+    assert n >= 0
+    if n > len(anime_id): 
+        n = len(anime_id)
 
+    if n:
+        return [anime[anime['anime_id'] == idx]['name'].values[0] for idx in anime_id[:n]]
+    return [anime[anime['anime_id'] == idx]['name'].values[0] for idx in anime_id]
 
-    # Get the user's latent factors
-    user_latent_factors = w1[user]
-
-    # Calculate the predicted ratings
-    pred_ratings = np.dot(user_latent_factors, h1)
-
-    # Create a DataFrame of the predicted ratings
-    pred_ratings_df = pd.DataFrame(pred_ratings, columns=user_item_matrix.columns)
-
-    # Get the user's watched anime
-    watched = user_item_matrix.loc[user].dropna().index
-
-    # Remove the watched anime from the predicted ratings
-    pred_ratings_df = pred_ratings_df.drop(columns=watched)
-
-    # Get the top 10 anime
-    top_anime = pred_ratings_df.idxmax(axis=1).head(10)
-
-    return top_anime
 
 if __name__ == '__main__':
     # RATINGS_PATH = '../data/rating.csv'
