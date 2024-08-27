@@ -2,9 +2,10 @@ import numpy as np
 import pandas as pd
 import os
 import pickle
+from sklearn.model_selection import train_test_split
 
-RATINGS_PATH = 'data/ratings.csv'
-ANIME_PATH = 'data/anime.csv'
+RATINGS_PATH = os.path.join(os.pardir, 'data', 'rating.csv')
+ANIME_PATH = os.path.join(os.pardir, 'data', 'anime.csv')
 
 def preprocess_data(RATINGS_PATH, ANIME_PATH):
     
@@ -34,32 +35,22 @@ def preprocess_data(RATINGS_PATH, ANIME_PATH):
     return ratings, anime
 
 def test_split(ratings):
+
+    # Create a mask for users with more than 20 ratings
+    user_counts = ratings['user_id'].value_counts()
+    frequent_users = user_counts[user_counts > 20].index
     
-    # Separate ratings into rated and unrated
-    rated = ratings[ratings['rating'] >= 0]
-    unrated = ratings[ratings['rating'] < 0]
+    # Get frequent and rated subset
+    rated = ratings[ratings['rating'] >= 0 & ratings['user_id'].isin(frequent_users)]
+    top_user_ratings = rated.groupby('user_id')['rating'].quantile(0.75)
+    bottom_user_ratings = rated.groupby('user_id')['rating'].quantile(0.25)
+    high_rating_mask = rated['rating'] >= rated['user_id'].map(top_user_ratings)
+    low_rating_mask = rated['rating'] <= rated['user_id'].map(bottom_user_ratings)
+    x_rated = rated[high_rating_mask | low_rating_mask]
 
-    # Count the occurrences of each user_id
-    user_counts = rated['user_id'].value_counts()
+    rating_train, rating_test = train_test_split(x_rated, test_size=0.3, random_state=42)
 
-    # Create a mask for users with more than 10 ratings
-    frequent_users = user_counts[user_counts > 10].index
-
-    # Create a subset of rated df with users who have more than 10 ratings
-    rated_subset = rated[rated['user_id'].isin(frequent_users)]
-
-    # Create a user-anime matrix
-    user_anime_matrix = ratings.pivot(index='user_id', columns='anime_id', values='rating')
-
-    # Fill missing values with 0
-    user_anime_matrix = user_anime_matrix.fillna(0)
-
-    # Create a mask for train-test split
-    mask = np.random.rand(*user_anime_matrix.shape) < 0.8
-    train = user_anime_matrix * mask
-    test = user_anime_matrix * ~mask
-
-    return train, test
+    return rating_train, rating_test
 
 def feature_engineer(ratings, anime):
     # Number of anime watched by each user
@@ -98,6 +89,10 @@ def feature_engineer(ratings, anime):
     user_episodes_data = ratings.merge(anime[['anime_id', 'episodes']], on='anime_id', how='left')
     user_episodes_data['episodes'] = user_episodes_data['episodes'].fillna(-1).astype(int)
     user_episodes_data['episodes'] = pd.cut(user_episodes_data['episodes'], bins=[-np.inf, 0, 1, 35, 200, np.inf], labels=['Unknown', 'Movie', 'Short', '6Seasons+', 'Huge'])
+    episodes_counts = pd.pivot_table(user_episodes_data, values='rating', index='user_id', 
+                                columns='episodes', aggfunc='count', fill_value=0)
+    episodes_counts = episodes_counts.div(episodes_counts.sum(axis=1), axis=0)
+    episodes_counts = episodes_counts.reset_index()
 
     # Genre ratings for each user
     # Remove unrated rows
@@ -115,36 +110,97 @@ def feature_engineer(ratings, anime):
                                 columns='type', aggfunc='mean', fill_value=0)
     type_ratings = type_ratings.reset_index()
 
-    return ratings, genre_counts, genre_ratings
+    # Episode size watch ratings for each user
+    e_pos_ratings = user_episodes_data[user_episodes_data['rating'] > 0]
+    e_pos_ratings = e_pos_ratings.explode('episodes')
+    episodes_ratings = pd.pivot_table(e_pos_ratings, values='rating', index='user_id', 
+                                columns='episodes', aggfunc='mean', fill_value=0)
+    episodes_ratings = episodes_ratings.reset_index()
 
-def nmf(redo=False):
+    return ratings, genre_counts, genre_ratings, episodes_counts, episodes_ratings, type_counts, type_ratings
+
+def nmf(train, redo=False):
     # Check if the 'nmf_components.pkl' file exists in the current directory
     if not redo:
-        if os.path.exists('nmf_components.pkl'):
+        if os.path.exists('data/nmf_components.pkl'):
             print("'nmf_components.pkl' file found.")
             redo = False
         else:
             print("'nmf_components.pkl' file not found. Will need to recalculate NMF components.")
             redo = True
 
-    user_item_matrix = rated.pivot(index='user_id', columns='anime_id', values='rating')
-
     if redo:
         from sklearn.decomposition import NMF
+
+        user_item_matrix = train.pivot(index='user_id', columns='anime_id', values='rating')
         # There are 44 genres, 20 components seems a good place to start
         dec = NMF(n_components=20, random_state=42)
         w1 = dec.fit_transform(user_item_matrix.fillna(0)) # user-group matrix
         h1 = dec.components_ # group-anime matrix
 
         # Save w1 and h1 to a pickle file
-        with open('nmf_components.pkl', 'wb') as f:
+        with open('data/nmf_components.pkl', 'wb') as f:
             pickle.dump({'w1': w1, 'h1': h1}, f)
 
-        print("NMF components (w1 and h1) have been saved to 'nmf_components.pkl'")
+        print("NMF components (w1 and h1) have been saved to 'data/nmf_components.pkl'")
 
     else:
         # Load the NMF components from the pickle file
-        with open('nmf_components.pkl', 'rb') as f:
+        with open('data/nmf_components.pkl', 'rb') as f:
             nmf_components = pickle.load(f)
         w1 = nmf_components['w1']
         h1 = nmf_components['h1']
+    
+    return w1, h1, user_item_matrix
+
+def recommend(user, w1, h1, user_item_matrix, n=5):
+    user_item_matrix.reset_index(inplace=True)
+    r_user = user_item_matrix[user_item_matrix['user_id'] == user].index
+
+    groups = w1.argmax(axis=1)
+    user_group = groups[r_user]
+
+    group_users = np.where(groups == user_group)
+
+    rec_anime = []
+    group_anime = h1[user_group, :]
+    for _ in range(n):
+        i_rec_anime = np.argmax(group_anime, axis=1)
+        group_anime = np.delete(group_anime, i_rec_anime, axis=0)
+        rec_anime.append(user_item_matrix.columns[i_rec_anime])
+
+    rec_anime_names = anime[anime['anime_id'].isin(rec_anime)]['name'].values
+    return rec_anime, rec_anime_names
+
+
+
+    # Get the user's latent factors
+    user_latent_factors = w1[user]
+
+    # Calculate the predicted ratings
+    pred_ratings = np.dot(user_latent_factors, h1)
+
+    # Create a DataFrame of the predicted ratings
+    pred_ratings_df = pd.DataFrame(pred_ratings, columns=user_item_matrix.columns)
+
+    # Get the user's watched anime
+    watched = user_item_matrix.loc[user].dropna().index
+
+    # Remove the watched anime from the predicted ratings
+    pred_ratings_df = pred_ratings_df.drop(columns=watched)
+
+    # Get the top 10 anime
+    top_anime = pred_ratings_df.idxmax(axis=1).head(10)
+
+    return top_anime
+
+if __name__ == '__main__':
+    # RATINGS_PATH = '../data/rating.csv'
+    # ANIME_PATH = '../data/anime.csv'
+    ratings, anime = preprocess_data(RATINGS_PATH, ANIME_PATH)
+    rating_train, rating_test = test_split(ratings)
+    ratings, genre_counts, genre_ratings, episodes_counts, episodes_ratings, type_counts, type_ratings = feature_engineer(ratings, anime)
+    w1, h1, user_item_matrix = nmf(rating_train, redo=False)
+    rec_anime, rec_anime_names = recommend(1, w1, h1, user_item_matrix, n=5)
+    print(rec_anime_names)
+    print(rec_anime)
