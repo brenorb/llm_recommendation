@@ -1,6 +1,7 @@
 import os
 from flask import Flask, request, jsonify
-from utils import preprocess_data, nmf, recommend
+from utils import preprocess_data, nmf, get_anime_name
+from llm import *
 import pickle 
 import pandas as pd
 import numpy as np
@@ -10,8 +11,23 @@ RATINGS_PATH = './data/rating.csv'
 ANIME_PATH = './data/anime.csv'
 
 
-
 app = Flask(__name__)
+
+def recommend_anime(user_id, k=10):
+    with open('data/nmf_components_rated.pkl', 'rb') as f:
+            nmf_components = pickle.load(f)
+    w1 = nmf_components['w1']
+    h1 = nmf_components['h1']
+    user_item_matrix = nmf_components['user_item_matrix']
+
+    # Load from pickle file
+    # with open('model_data.pkl', 'rb') as f:
+    #     ratings, anime, w1, h1, user_item_matrix = pickle.load(f)
+
+    ratings, anime = preprocess_data(RATINGS_PATH, ANIME_PATH)
+
+    rec_anime_names = get_anime_name(user_id, w1, h1, user_item_matrix, anime, n=k)
+    return rec_anime_names
 
 @app.route('/')
 def index():
@@ -108,16 +124,25 @@ def get_user():
 
 
 @app.route('/recommend/<int:user_id>', methods=['GET'])
-def recommend_anime(user_id):
-    # Load from pickle file
-    with open('model_data.pkl', 'rb') as f:
-        ratings, anime, w1, h1, user_item_matrix = pickle.load(f)
-
+def recommend_anime_api(user_id):
     k = request.args.get('k', default=5, type=int)  # Get the top k from query parameters
-    rec_anime, rec_weight = recommend(user_id, w1, h1, user_item_matrix)
-    rec_anime_names = [anime[anime['anime_id'] == idx]['name'].values[0] for idx in rec_anime[:k]]  # Limit to top k
+    rec_anime_names = recommend_anime(user_id, k)
+    return jsonify({'recommended_anime': rec_anime_names}), 200
 
-    return jsonify({'recommended_anime': rec_anime_names, 'weights': rec_weight[:k].tolist()}), 200
+@app.route('/talk/<int:user_id>/<string:message>', methods=['GET'])
+def llm(user_id, message):
+    is_debug_mode = app.debug
+    sys = '''You are an anime recommendation assistant. You will be provided with prompt request for recommendation and a list of anime. Based on the user ID and the message, you will recommend anime to the user. 
+    Pick one anime from the list and recommend it to the user.'''
+    rec_anime_names = recommend_anime(user_id)
+
+    message = 'My most likely unwatched animes to like: ' + str(rec_anime_names) + '\n\n' + str(message)
+    ans = response(askgpt(message, system=sys))
+    if is_debug_mode:
+        return jsonify({'rec': ans, 'sys': sys, 'prompt': message, 'debug': True}), 200
+    else:
+        return jsonify({'rec': ans}), 200
+
 
 if __name__ == '__main__':
     app.run(debug=True)

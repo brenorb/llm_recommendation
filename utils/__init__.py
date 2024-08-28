@@ -7,8 +7,19 @@ from sklearn.model_selection import train_test_split
 RATINGS_PATH = os.path.join(os.pardir, 'data', 'rating.csv')
 ANIME_PATH = os.path.join(os.pardir, 'data', 'anime.csv')
 
-def preprocess_data(RATINGS_PATH, ANIME_PATH):
-    
+def preprocess_data(RATINGS_PATH: str, ANIME_PATH: str) -> tuple:
+    """
+    Preprocesses the ratings and anime data.
+
+    Args:
+        RATINGS_PATH (str): Path to the ratings CSV file.
+        ANIME_PATH (str): Path to the anime CSV file.
+
+    Returns:
+        tuple: A tuple containing:
+            - ratings (DataFrame): The processed ratings DataFrame.
+            - anime (DataFrame): The processed anime DataFrame.
+    """
     ratings = pd.read_csv(RATINGS_PATH)
     anime = pd.read_csv(ANIME_PATH)
 
@@ -34,9 +45,18 @@ def preprocess_data(RATINGS_PATH, ANIME_PATH):
 
     return ratings, anime
 
-def test_split(ratings):
+def test_split(ratings: pd.DataFrame) -> tuple:
+    """
+    Splits the ratings data into training and testing sets.
 
-    # Create a mask for users with more than 20 ratings
+    Args:
+        ratings (DataFrame): The ratings DataFrame.
+
+    Returns:
+        tuple: A tuple containing:
+            - rating_train (DataFrame): The training DataFrame.
+            - rating_test (DataFrame): The testing DataFrame.
+    """
     user_counts = ratings['user_id'].value_counts()
     frequent_users = user_counts[user_counts > 20].index
     
@@ -52,7 +72,19 @@ def test_split(ratings):
 
     return rating_train, rating_test
 
-def feature_engineer(ratings, anime):
+def feature_engineer(ratings: pd.DataFrame, anime: pd.DataFrame) -> tuple:
+    """
+    Performs feature engineering on the ratings and anime data.
+
+    Args:
+        ratings (DataFrame): The ratings DataFrame.
+        anime (DataFrame): The anime DataFrame.
+
+    Returns:
+        tuple: A tuple containing:
+            - ratings (DataFrame): The processed ratings DataFrame with additional features.
+            - features (list): A list of DataFrames containing various feature counts and ratings.
+    """
     # Number of anime watched by each user
     ratings['total_watch'] = ratings['user_id'].map(ratings['user_id'].value_counts())
     
@@ -95,7 +127,6 @@ def feature_engineer(ratings, anime):
     episodes_counts = episodes_counts.reset_index()
 
     # Genre ratings for each user
-    # Remove unrated rows
     g_pos_ratings = user_genre_data[user_genre_data['rating'] > 0]
     g_pos_ratings = g_pos_ratings.explode('genre')
     g_pos_ratings['genre'] = g_pos_ratings['genre'].str.strip()
@@ -119,8 +150,20 @@ def feature_engineer(ratings, anime):
 
     return ratings, [genre_counts, genre_ratings, episodes_counts, episodes_ratings, type_counts, type_ratings]
 
-def nmf(training_data, redo=False):
-    # Check if the 'nmf_components.pkl' file exists in the current directory
+def nmf(training_data: pd.DataFrame, redo: bool = False) -> tuple:
+    """
+    Applies Non-negative Matrix Factorization (NMF) to the training data.
+
+    Args:
+        training_data (DataFrame): The training data for NMF.
+        redo (bool): Whether to recalculate NMF components.
+
+    Returns:
+        tuple: A tuple containing:
+            - w1 (ndarray): The user-group matrix from NMF.
+            - h1 (ndarray): The group-anime matrix from NMF.
+            - user_item_matrix (DataFrame): The user-item matrix.
+    """
     if not redo:
         if os.path.exists('data/nmf_components.pkl'):
             print("'nmf_components.pkl' file found.")
@@ -129,15 +172,17 @@ def nmf(training_data, redo=False):
             print("'nmf_components.pkl' file not found. Will need to recalculate NMF components.")
             redo = True
 
+    if training_data.min(axis=1).min() < 0:
+        training_data = training_data.add(abs(training_data.min(axis=1).min()), axis=0)
+
     user_item_matrix = training_data.pivot(index='user_id', columns='anime_id', values='rating')
     
     if redo:
         from sklearn.decomposition import NMF
 
-        # There are 44 genres, 20 components seems a good place to start
         dec = NMF(n_components=20, random_state=42)
-        w1 = dec.fit_transform(user_item_matrix.fillna(0)) # user-group matrix
-        h1 = dec.components_ # group-anime matrix
+        w1 = dec.fit_transform(user_item_matrix.fillna(0))  # user-group matrix
+        h1 = dec.components_  # group-anime matrix
 
         # Save w1 and h1 to a pickle file
         with open('data/nmf_components.pkl', 'wb') as f:
@@ -154,7 +199,21 @@ def nmf(training_data, redo=False):
     
     return w1, h1, user_item_matrix
 
-def recommend(user, w1, h1, user_item_matrix):
+def recommend(user: int, w1: np.ndarray, h1: np.ndarray, user_item_matrix: pd.DataFrame) -> tuple:
+    """
+    Recommends anime for a specific user based on NMF components.
+
+    Args:
+        user (int): The user ID for whom to recommend anime.
+        w1 (ndarray): The user-group matrix from NMF.
+        h1 (ndarray): The group-anime matrix from NMF.
+        user_item_matrix (DataFrame): The user-item matrix.
+
+    Returns:
+        tuple: A tuple containing:
+            - rec_anime_id (Index): Recommended anime IDs.
+            - rec_weight (ndarray): Corresponding weights for the recommendations.
+    """
     r_user = user_item_matrix.index.get_loc(user)
 
     groups = w1.argmax(axis=1)
@@ -175,24 +234,40 @@ def recommend(user, w1, h1, user_item_matrix):
     rec_weight = group_anime[rec_cols] / np.sum(group_anime[rec_cols])
     
     return rec_anime_id, rec_weight
-    
-def get_anime_name(anime_id, anime, n=0):
-    
-    assert n >= 0
-    if n > len(anime_id): 
-        n = len(anime_id)
+
+def get_anime_name(user: int, w1: np.ndarray, h1: np.ndarray, user_item_matrix: pd.DataFrame, anime: pd.DataFrame, n: int = 0) -> list:
+    """
+    Retrieves the names of recommended anime for a user.
+
+    Args:
+        user (int): The user ID for whom to retrieve anime names.
+        w1 (ndarray): The user-group matrix from NMF.
+        h1 (ndarray): The group-anime matrix from NMF.
+        user_item_matrix (DataFrame): The user-item matrix.
+        anime (DataFrame): The anime DataFrame.
+        n (int): The number of recommendations to return.
+
+    Returns:
+        list: A list of recommended anime names.
+    """
+    rec_anime_id, _ = recommend(user, w1, h1, user_item_matrix)
+
+    if n < 0:
+        n = 0
+    if n > len(rec_anime_id): 
+        n = len(rec_anime_id) - 1
 
     if n:
-        return [anime[anime['anime_id'] == idx]['name'].values[0] for idx in anime_id[:n]]
-    return [anime[anime['anime_id'] == idx]['name'].values[0] for idx in anime_id]
+        return [anime[anime['anime_id'] == anime_id]['name'].values[0] for anime_id in rec_anime_id[:n] if anime_id in anime['anime_id'].values]
 
+    return [anime[anime['anime_id'] == anime_id]['name'].values[0] for anime_id in rec_anime_id if anime_id in anime['anime_id'].values]
 
 if __name__ == '__main__':
     # RATINGS_PATH = '../data/rating.csv'
     # ANIME_PATH = '../data/anime.csv'
     ratings, anime = preprocess_data(RATINGS_PATH, ANIME_PATH)
     rating_train, rating_test = test_split(ratings)
-    ratings, genre_counts, genre_ratings, episodes_counts, episodes_ratings, type_counts, type_ratings = feature_engineer(ratings, anime)
+    ratings, features = feature_engineer(ratings, anime)
     w1, h1, user_item_matrix = nmf(rating_train, redo=False)
     rec_anime, rec_anime_names = recommend(1, w1, h1, user_item_matrix, n=5)
     print(rec_anime_names)
