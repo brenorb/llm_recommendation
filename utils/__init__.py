@@ -117,7 +117,7 @@ def feature_engineer(ratings, anime):
                                 columns='episodes', aggfunc='mean', fill_value=0)
     episodes_ratings = episodes_ratings.reset_index()
 
-    return ratings, genre_counts, genre_ratings, episodes_counts, episodes_ratings, type_counts, type_ratings
+    return ratings, [genre_counts, genre_ratings, episodes_counts, episodes_ratings, type_counts, type_ratings]
 
 def nmf(training_data, redo=False):
     # Check if the 'nmf_components.pkl' file exists in the current directory
