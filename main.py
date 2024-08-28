@@ -1,58 +1,111 @@
 import os
 from flask import Flask, request, jsonify
 from utils import preprocess_data, nmf, recommend
-import pickle  # Add this import
-import threading  # Add this import
-import time
+import pickle 
 import pandas as pd
+import numpy as np
 
 
-RATINGS_PATH = '/data/up_rating.csv'
-ANIME_PATH = '/data/up_anime.csv'
+RATINGS_PATH = './data/rating.csv'
+ANIME_PATH = './data/anime.csv'
+
+
 
 app = Flask(__name__)
 
 @app.route('/')
 def index():
-    def background_task():
-        # Wait for 30 seconds
-        time.sleep(30)
-        print("Background task completed after 30 seconds.")
+    # def background_task():
+    #     # Wait for 30 seconds
+    #     time.sleep(30)
+    #     print("Background task completed after 30 seconds.")
 
     # Start the background task
-    thread = threading.Thread(target=background_task)
-    thread.start()
+    # thread = threading.Thread(target=background_task)
+    # thread.start()
 
     return 'Welcome to the Anime Recommendation API!'
 
-@app.route('/upload', methods=['POST'])
-def upload_files():
-    # if 'rating' not in request.files or 'anime' not in request.files:
-    #     print(request.files)
-    #     return jsonify({'error': 'Please upload both ratings and anime CSV files.'}), 400
+@app.route('/anime', methods=['GET'])
+def get_anime():
 
-    # ratings_file = request.files['ratings']
-    # anime_file = request.files['anime']
-    data = request.get_json()
-    ratings_file = pd.DataFrame(data['ratings'])
-    anime_file = pd.DataFrame(data['anime'])
+    _, anime = preprocess_data(RATINGS_PATH, ANIME_PATH)
 
-    ratings_file.to_csv(RATINGS_PATH, index=False)
-    anime_file.to_csv(ANIME_PATH, index=False)
+    anime_id = request.args.get('anime_id', default=None, type=int)
+    name = request.args.get('name', default=None, type=str)
+    genre = request.args.get('genre', default=None, type=str)
+    type_ = request.args.get('type', default=None, type=str)
+    episodes = request.args.get('episodes', default=None, type=int)
+    mt_episodes = request.args.get('mt_episodes', default=None, type=int)
+    lt_episodes = request.args.get('lt_episodes', default=None, type=int)
+    rating = request.args.get('rating', default=None, type=float)
+    mt_rating = request.args.get('mt_rating', default=None, type=float)
+    lt_rating = request.args.get('lt_rating', default=None, type=float)
+    members = request.args.get('members', default=None, type=int)
+    mt_members = request.args.get('mt_members', default=None, type=int)
+    lt_members = request.args.get('lt_members', default=None, type=int)
 
-    # ratings_file.save(RATINGS_PATH)
-    # anime_file.save(ANIME_PATH)
+    masks = []
+    if anime_id:
+        masks.append(anime['anime_id'] == anime_id)
+    if name:
+        masks.append(anime['name'] == name)
+    if genre:
+        masks.append(anime['genre'].str.contains(genre, case=False))
+    if type_:
+        masks.append(anime['type'] == type_)
+    if episodes:
+        masks.append(anime['episodes'] == episodes)
+    if mt_episodes:
+        masks.append(anime['episodes'] > mt_episodes)
+    if lt_episodes:
+        masks.append(anime['episodes'] < lt_episodes)
+    if rating:
+        masks.append(anime['rating'] == rating)
+    if mt_rating:
+        masks.append(anime['rating'] > mt_rating)
+    if lt_rating:
+        masks.append(anime['rating'] < lt_rating)
+    if members:
+        masks.append(anime['members'] == members)
+    if mt_members:
+        masks.append(anime['members'] > mt_members)
+    if lt_members:
+        masks.append(anime['members'] < lt_members)
 
-    ratings, anime = preprocess_data(RATINGS_PATH, ANIME_PATH)
-    ratings, _ = feature_engineer(ratings, anime)
-    # w1, h1, user_item_matrix = nmf(ratings, redo=False)
-    w1, h1, user_item_matrix = 1, 2, 3  # mock data
+    if masks:
+        return anime[np.logical_and.reduce(masks)].to_json(orient='records'), 200
+    else:
+        return jsonify({'message': 'No data.'}), 200
+ 
+@app.route('/user', methods=['GET'])
+def get_user():
 
-    # Save to pickle file
-    with open('model_data.pkl', 'wb') as f:
-        pickle.dump((ratings, anime, w1, h1, user_item_matrix), f)
+    ratings, _ = preprocess_data(RATINGS_PATH, ANIME_PATH)
+    
+    user_id = request.args.get('user_id', default=None, type=int)
+    anime_id = request.args.get('anime_id', default=None, type=int)
+    rating = request.args.get('rating', default=None, type=float)
+    mt_rating = request.args.get('mt_rating', default=None, type=float)
+    lt_rating = request.args.get('lt_rating', default=None, type=float)
 
-    return jsonify({'message': 'Files uploaded successfully.'}), 200
+    masks = []
+    if user_id:
+        masks.append(ratings['user_id'] == user_id)
+    if anime_id:
+        masks.append(ratings['anime_id'] == anime_id)
+    if rating:
+        masks.append(ratings['rating'] == rating)
+    if mt_rating:
+        masks.append(ratings['rating'] > mt_rating)
+    if lt_rating:
+        masks.append(ratings['rating'] < lt_rating)
+
+    if masks:
+        return ratings[np.logical_and.reduce(masks)].to_json(orient='records'), 200
+    else:
+        return jsonify({'message': 'No data.'}), 200
+
 
 @app.route('/recommend/<int:user_id>', methods=['GET'])
 def recommend_anime(user_id):

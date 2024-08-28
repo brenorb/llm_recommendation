@@ -26,11 +26,11 @@ def preprocess_data(RATINGS_PATH, ANIME_PATH):
     ratings = ratings.drop_duplicates(subset=['user_id', 'anime_id'], keep='last')
     anime = anime.drop_duplicates(subset=['anime_id'], keep='last')
 
-    all_genres = anime['genre'].dropna().str.split(',')
-    unique_genres = set([genre.strip() for genres in all_genres for genre in genres])
+    # all_genres = anime['genre'].dropna().str.split(',')
+    # unique_genres = set([genre.strip() for genres in all_genres for genre in genres])
     
-    for genre in sorted(unique_genres):
-        anime[genre] = anime['genre'].str.contains(genre).astype(int)
+    # for genre in sorted(unique_genres):
+    #     anime[genre] = anime['genre'].str.contains(genre).astype(int)
 
     return ratings, anime
 
