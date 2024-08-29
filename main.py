@@ -1,7 +1,7 @@
 import os
 from flask import Flask, request, jsonify
 from utils import preprocess_data, nmf, get_anime_name
-from llm import *
+from llm import askgpt, response
 import pickle 
 import pandas as pd
 import numpy as np
@@ -14,31 +14,24 @@ ANIME_PATH = './data/anime.csv'
 app = Flask(__name__)
 
 def recommend_anime(user_id, k=10):
-    with open('data/nmf_components_rated.pkl', 'rb') as f:
-            nmf_components = pickle.load(f)
-    w1 = nmf_components['w1']
-    h1 = nmf_components['h1']
-    user_item_matrix = nmf_components['user_item_matrix']
-
-    # Load from pickle file
-    # with open('model_data.pkl', 'rb') as f:
-    #     ratings, anime, w1, h1, user_item_matrix = pickle.load(f)
-
     ratings, anime = preprocess_data(RATINGS_PATH, ANIME_PATH)
 
+    training_data = ratings[ratings.rating > 0]
+
+    if os.path.exists('data/nmf_components.pkl'):
+        with open('data/nmf_components.pkl', 'rb') as f:
+            nmf_components = pickle.load(f)
+        w1 = nmf_components['w1']
+        h1 = nmf_components['h1']
+        user_item_matrix = training_data.pivot(index='user_id', columns='anime_id', values='rating').fillna(0)
+    else:
+        w1, h1, user_item_matrix = nmf(training_data, redo=True)
+    
     rec_anime_names = get_anime_name(user_id, w1, h1, user_item_matrix, anime, n=k)
     return rec_anime_names
 
 @app.route('/')
 def index():
-    # def background_task():
-    #     # Wait for 30 seconds
-    #     time.sleep(30)
-    #     print("Background task completed after 30 seconds.")
-
-    # Start the background task
-    # thread = threading.Thread(target=background_task)
-    # thread.start()
 
     return 'Welcome to the Anime Recommendation API!'
 
@@ -122,7 +115,6 @@ def get_user():
     else:
         return jsonify({'message': 'No data.'}), 200
 
-
 @app.route('/recommend/<int:user_id>', methods=['GET'])
 def recommend_anime_api(user_id):
     k = request.args.get('k', default=5, type=int)  # Get the top k from query parameters
@@ -145,4 +137,4 @@ def llm(user_id, message):
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False, host='0.0.0.0', port=5000)
