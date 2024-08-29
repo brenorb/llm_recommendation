@@ -10,24 +10,28 @@ import numpy as np
 RATINGS_PATH = './data/rating.csv'
 ANIME_PATH = './data/anime.csv'
 
+ratings, anime = preprocess_data(RATINGS_PATH, ANIME_PATH)
+training_data = ratings[ratings.rating > 0]
+
+# Uncomment the following line to redo NMF components
+# w1, h1, user_item_matrix = nmf(training_data, redo=True)
+
+if os.path.exists('data/nmf_components.pkl'):
+    with open('data/nmf_components.pkl', 'rb') as f:
+        nmf_components = pickle.load(f)
+    w1 = nmf_components['w1']
+    h1 = nmf_components['h1']
+    user_item_matrix = training_data.pivot(index='user_id', columns='anime_id', values='rating')
+else:
+    print('NMF components not found. Will need to recalculate NMF components.')
+    w1, h1, user_item_matrix = nmf(training_data, redo=True)
 
 app = Flask(__name__)
 
 def recommend_anime(user_id, k=10):
-    ratings, anime = preprocess_data(RATINGS_PATH, ANIME_PATH)
-
-    training_data = ratings[ratings.rating > 0]
-
-    if os.path.exists('data/nmf_components.pkl'):
-        with open('data/nmf_components.pkl', 'rb') as f:
-            nmf_components = pickle.load(f)
-        w1 = nmf_components['w1']
-        h1 = nmf_components['h1']
-        user_item_matrix = training_data.pivot(index='user_id', columns='anime_id', values='rating').fillna(0)
-    else:
-        w1, h1, user_item_matrix = nmf(training_data, redo=True)
-    
+    global w1, h1, user_item_matrix, anime   
     rec_anime_names = get_anime_name(user_id, w1, h1, user_item_matrix, anime, n=k)
+    print(rec_anime_names)
     return rec_anime_names
 
 @app.route('/')
@@ -118,7 +122,8 @@ def get_user():
 @app.route('/recommend/<int:user_id>', methods=['GET'])
 def recommend_anime_api(user_id):
     k = request.args.get('k', default=5, type=int)  # Get the top k from query parameters
-    rec_anime_names = recommend_anime(user_id, k)
+    # rec_anime_names = recommend_anime(user_id, k)
+    rec_anime_names = get_anime_name(user_id, w1, h1, user_item_matrix, anime, n=k)
     return jsonify({'recommended_anime': rec_anime_names}), 200
 
 @app.route('/talk/<int:user_id>/<string:message>', methods=['GET'])
@@ -130,11 +135,12 @@ def llm(user_id, message):
 
     message = 'My most likely unwatched animes to like: ' + str(rec_anime_names) + '\n\n' + str(message)
     ans = response(askgpt(message, system=sys))
+    global w1, h1, user_item_matrix
     if is_debug_mode:
-        return jsonify({'rec': ans, 'sys': sys, 'prompt': message, 'debug': True}), 200
+        return jsonify({'rec': ans, 'sys': sys, 'prompt': message, 'debug': True, 'W1': w1.tolist(), 'H1': h1.tolist(), 'user_item_matrix': user_item_matrix.to_dict('records')}), 200
     else:
         return jsonify({'rec': ans}), 200
 
 
 if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    app.run(debug=True)
