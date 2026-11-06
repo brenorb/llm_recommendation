@@ -1,3 +1,6 @@
+#!/bin/sh
+set -eu
+
 docker build --tag llm_rec .
-docker run -d --name my_flask_app -e OPENAI_API_KEY=$OPENAI_API_KEY -p 5000:5000 llm_rec
-docker exec -it my_flask_app celery -A llm_recommendation.main_celery worker --loglevel=info
+docker run --rm -e OPENAI_API_KEY -p 127.0.0.1:5000:5000 \
+  --mount "type=bind,src=$PWD/data,dst=/app/data" llm_rec
