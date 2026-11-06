@@ -10,14 +10,12 @@ COPY requirements.txt .
 # Install the dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code into the container
-COPY . .
-
-ARG OPENAI_API_KEY
-
-ENV OPENAI_API_KEY=$OPENAI_API_KEY
+# Copy application code. Supply the dataset and credentials at runtime.
+COPY main.py .
+COPY llm/ ./llm/
+COPY utils/ ./utils/
 
 # Command to run the application
-CMD ["python", "main.py"]
+CMD ["python", "-m", "flask", "--app", "main", "run", "--host", "0.0.0.0"]
 
 EXPOSE 5000

@@ -128,6 +128,8 @@ def recommend_anime_api(user_id):
 
 @app.route('/talk/<int:user_id>/<string:message>', methods=['GET'])
 def llm(user_id, message):
+    if not os.environ.get('OPENAI_API_KEY'):
+        return jsonify({'error': 'Set OPENAI_API_KEY to use /talk.'}), 503
     is_debug_mode = app.debug
     sys = '''You are an anime recommendation assistant. You will be provided with prompt request for recommendation and a list of anime. Based on the user ID and the message, you will recommend anime to the user. 
     Pick one anime from the list and recommend it to the user.'''

@@ -3,16 +3,19 @@ App for recommending anime with LLMs
 
 ## Quick Start Guide
 
-### Prerequisites
-- Docker installed on your machine.
-- An OpenAI API key (if using OpenAI services).
+Install Docker and place the dataset in `data/` under the project directory.
 
-### Build the Docker Image and Run the Project
-To build the Docker image and run the project, run the following commands in the project directory:
+- `data/rating.csv` needs the columns `user_id`, `anime_id`, and `rating`.
+- `data/anime.csv` needs the columns `anime_id`, `name`, `genre`, `type`, `episodes`, `rating`, and `members`.
 
-```
+The first run trains the recommendation model and writes `data/nmf_components.pkl`
+if that file is missing. Set `OPENAI_API_KEY` in your shell to enable `/talk`.
+The other routes work without a key.
+
+```sh
 docker build -t llm_rec .
-docker run -d --name my_flask_app -e OPENAI_API_KEY=$OPENAI_API_KEY -p 5000:5000 llm_rec
+docker run --rm -e OPENAI_API_KEY -p 127.0.0.1:5000:5000 \
+  --mount "type=bind,src=$PWD/data,dst=/app/data" llm_rec
 ```
 
 ### API Endpoints
@@ -20,7 +23,7 @@ docker run -d --name my_flask_app -e OPENAI_API_KEY=$OPENAI_API_KEY -p 5000:5000
 - **GET /anime**: Queries the anime dataset based on various filters. E.g. `/anime?mt_episodes=200&lt_episodes=300&mt_rating=7&mt_members=1000&genre=Drama` queries for a Drama anime with 200 to 300 episodes, a rating of more than 7, and more than 1000 members.
 - **GET /user**: Queries the user dataset based on various filters. E.g. `/user?user_id=567&mt_rating=5&lt_rating=7` queries for all entries of user 567 with a rating of more than 5 and less than 7.
 - **GET /recommend/<int:user_id>**: Provides recommendations for a specified user. The user can specify the number of recommendations to return using the `k` parameter. If not specified, the default value is 5.
-- **GET /anime**: Provides a more natural experience for the user to get recommendations.
+- **GET /talk/<int:user_id>/<string:message>**: Uses OpenAI to recommend an anime based on the user's request.
 
 ### Querying Anime Data
 You can query anime data using the `/anime` endpoint with various parameters. Here are some examples:
@@ -82,7 +85,7 @@ GET /recommend/123?k=7
 This will return the top 7 anime recommendations for user with ID 123.
 
 ### Querying Natural Language
-You can query the natural language interface using the `/anime` endpoint with various parameters. Here are some examples:
+Send a natural language request to `/talk`. Percent-encode the message in the URL.
 
 ```
 GET /talk/123/I%20want%20a%20happy%20anime

@@ -1,16 +1,16 @@
-import os
+from functools import cache
 from openai import OpenAI
 
-client = OpenAI(
-    # This is the default and can be omitted
-    api_key=os.environ.get("OPENAI_API_KEY"),
-)
+
+@cache
+def _get_client():
+    return OpenAI()
 
 def askgpt(user, system=None, model="gpt-4o", **kwargs):
     msgs = []
     if system: msgs.append({"role": "system", "content": system})
     msgs.append({"role": "user", "content": user})
-    return client.chat.completions.create(model=model, messages=msgs, **kwargs)
+    return _get_client().chat.completions.create(model=model, messages=msgs, **kwargs)
 
 def response(compl):
     return compl.choices[0].message.content
